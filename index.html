@@ -105,12 +105,18 @@ function cloudFetch(callback) {
   fetch(JSONBIN_URL + "/latest", {
     headers: { "X-Master-Key": JSONBIN_KEY, "X-Bin-Meta": "false" }
   })
-  .then(function(r) { return r.json(); })
+  .then(function(r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  })
   .then(function(data) {
     _localCache = data;
     callback(data);
   })
-  .catch(function() { callback(null); });
+  .catch(function(err) {
+    console.warn("JSONBin fetch failed:", err);
+    callback(null);
+  });
 }
 
 // Push state to JSONBin (debounced 800ms so rapid picks don't spam)
@@ -769,7 +775,11 @@ function App() {
 
   // On mount: pull from cloud, merge with local
   useEffect(function(){
+    // Safety timeout — show app after 6s even if fetch fails
+    var safetyTimer = setTimeout(function(){ setSyncStatus("ready"); }, 6000);
+
     cloudFetch(function(data) {
+      clearTimeout(safetyTimer);
       if (data && data.users) {
         setUsers(data.users);
         setResults(data.results || INITIAL_RESULTS);
@@ -780,6 +790,7 @@ function App() {
       }
       setSyncStatus("ready");
     });
+
     // Poll for updates every 20 seconds (so leaderboard stays live)
     var pollId = setInterval(function(){
       cloudFetch(function(data){
@@ -789,7 +800,7 @@ function App() {
         setLocked(data.locked || false);
       });
     }, 20000);
-    return function(){ clearInterval(pollId); };
+    return function(){ clearInterval(pollId); clearTimeout(safetyTimer); };
   }, []);
 
   useEffect(function() {
@@ -967,8 +978,7 @@ function App() {
       ),
       e("div", { style:{ fontSize:11, color:"rgba(255,255,255,0.4)", fontFamily:"'Barlow Condensed'", marginBottom:20, lineHeight:1.5 } },
         pinFlowMode === "new"
-          ? "Create a PIN to protect your bracket. Only you can edit it.
-Min 4 digits."
+          ? "Create a PIN to protect your bracket. Only you can edit it. Min 4 digits."
           : "Welcome back, " + (pendingUser ? pendingUser.name : "") + "! Enter your PIN to access your bracket."
       ),
       e("input", { type:"password", inputMode:"numeric", placeholder:"Enter PIN", value:pinInput,
@@ -998,11 +1008,8 @@ Min 4 digits."
     syncStatus === "loading" ? "connecting..." : syncStatus === "synced" ? "live" : "syncing..."
   ) : null;
 
-  // Loading screen
-  if (syncStatus === "loading") return e("div", { style:{ minHeight:"100vh", background:"#06090f", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 } },
-    e("div", { style:{ fontSize:28 } }, "🏀"),
-    e("div", { style:{ fontSize:11, color:"rgba(255,215,0,0.6)", fontFamily:"'Barlow Condensed'", letterSpacing:"0.2em" } }, "LOADING BRACKETS...")
-  );
+  // Connecting banner shown while loading (non-blocking after safety timer)
+  var connectingBanner = syncStatus === "loading" ? e("div", { style:{ background:"rgba(255,215,0,0.08)", borderBottom:"1px solid rgba(255,215,0,0.15)", padding:"8px 20px", textAlign:"center", fontSize:10, fontFamily:"'Barlow Condensed'", letterSpacing:"0.2em", color:"rgba(255,215,0,0.6)" } }, "⏳ LOADING BRACKETS...") : null;
 
   return e("div", { style:{ minHeight:"100vh", color:"#fff", position:"relative", overflow:"hidden" } },
     // Animated background
@@ -1011,6 +1018,7 @@ Min 4 digits."
     } }),
     e("div", { style:{ position:"relative", zIndex:1 } },
       nav,
+      connectingBanner,
       e("div", { style:contentStyle },
         screen === "admin" && showAdmin ? e(AdminPanel, { results:results, setResults:setResults, locked:locked, setLocked:setLocked, bracket:INITIAL_BRACKET }) : null,
         screen === "home" ? homeScreen : null,
